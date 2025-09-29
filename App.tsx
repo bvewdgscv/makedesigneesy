@@ -9,8 +9,10 @@ import OutputDisplay from './components/OutputDisplay';
 const App: React.FC = () => {
     const [originalImage, setOriginalImage] = useState<File | null>(null);
     const [originalImagePreview, setOriginalImagePreview] = useState<string | null>(null);
-    const [selectedTransformation, setSelectedTransformation] = useState<TransformationType>(TransformationType.LINE_ART);
+    const [prompt, setPrompt] = useState<string>("A highly detailed, photorealistic wooden circular carving, approximately 24 inches in diameter, placed on a dark, polished antique wooden table. The carving depicts an intricate floral and scrollwork mandala design, featuring a prominent central rose surrounded by layers of delicate petals, leaves, and swirling tendrils, all deeply carved into light-brown, finely-grained wood. The relief should show subtle variations in depth, giving it a natural, handcrafted appearance, with smooth, slightly reflective surfaces that catch the ambient light. The background of the carving should have a fine, stippled texture that contrasts with the smooth, raised elements. Subtle shadows should fall across the carved details, enhancing the three-dimensional effect. The overall lighting should be soft and warm, highlighting the texture and depth of the wood. Include some subtle dust motes floating in the air near the carving for added realism.");
+    const [selectedTransformation, setSelectedTransformation] = useState<TransformationType>(TransformationType.TEXT_TO_IMAGE);
     const [selectedModel, setSelectedModel] = useState<string>(TRANSFORMATION_MODELS[selectedTransformation][0]);
+    const [intensity, setIntensity] = useState<number>(5);
     const [outputImage, setOutputImage] = useState<string | null>(null);
     const [outputText, setOutputText] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -19,6 +21,9 @@ const App: React.FC = () => {
     useEffect(() => {
         // Reset to the default model when the transformation type changes
         setSelectedModel(TRANSFORMATION_MODELS[selectedTransformation][0]);
+        setOutputImage(null);
+        setOutputText(null);
+        setError(null);
     }, [selectedTransformation]);
 
     const handleImageUpload = (file: File) => {
@@ -47,7 +52,12 @@ const App: React.FC = () => {
     };
 
     const handleGenerate = useCallback(async () => {
-        if (!originalImage) {
+        if (selectedTransformation === TransformationType.TEXT_TO_IMAGE) {
+            if (!prompt) {
+                setError("Please enter a prompt.");
+                return;
+            }
+        } else if (!originalImage) {
             setError("Please upload an image first.");
             return;
         }
@@ -58,17 +68,35 @@ const App: React.FC = () => {
         setOutputText(null);
 
         try {
-            const base64Data = await fileToBase64(originalImage);
-            const mimeType = originalImage.type;
+            if (selectedTransformation === TransformationType.TEXT_TO_IMAGE) {
+                const result = await generateImageFromPrompt(prompt);
+                setOutputImage(result);
+                return; 
+            }
+            
+            const base64Data = await fileToBase64(originalImage!);
+            const mimeType = originalImage!.type;
+
+            const getIntensityLabel = (value: number): string => {
+                if (value <= 3) return 'a subtle, low amount of';
+                if (value <= 7) return 'a moderate amount of';
+                return 'a strong, high amount of';
+            };
+
+            const getAbstractionLevel = (value: number): string => {
+                if (value <= 3) return 'subtly, keeping most original details';
+                if (value <= 7) return 'moderately, balancing abstraction and original form';
+                return 'in a highly abstract way, using only basic shapes';
+            };
 
             switch (selectedTransformation) {
                 case TransformationType.LINE_ART:
                     const lineArt = await generateImageTransformation(base64Data, mimeType, "Extract the clean, black and white line art from this image. The background should be pure white. Focus on the main contours and outlines.");
                     setOutputImage(lineArt);
                     break;
-                case TransformationType.DEPTH_MAP:
-                    const depthMap = await generateImageTransformation(base64Data, mimeType, "Generate a monocular depth map for this image. Closer objects should be lighter, and farther objects should be darker. Provide a grayscale image representing depth.");
-                    setOutputImage(depthMap);
+                case TransformationType.RELIEF_MODEL:
+                    const reliefMap = await generateImageTransformation(base64Data, mimeType, "Generate a high-contrast, detailed grayscale depth map for this image, suitable for creating a 3D bas-relief model for STL generation. Lighter areas should represent higher elevation (closer to the viewer), and darker areas should represent lower elevation (further from the viewer). The output should be a clean image optimized for 3D displacement.");
+                    setOutputImage(reliefMap);
                     break;
                 case TransformationType.VARIATION:
                     if (selectedModel === 'imagen-4.0-generate-001') {
@@ -85,6 +113,11 @@ const App: React.FC = () => {
                         setOutputImage(variation);
                     }
                     break;
+                case TransformationType.LOGO:
+                    const logoPrompt = "Analyze the provided image and generate a clean, modern, vector-style logo based on its key elements and themes (like nature, adventure, contemplation). Then, place this generated logo as a small, tasteful watermark in the bottom-right corner of the original image. The final output should be the original image with the new logo added.";
+                    const logo = await generateImageTransformation(base64Data, mimeType, logoPrompt);
+                    setOutputImage(logo);
+                    break;
                 case TransformationType.DESCRIPTION:
                     const description = await generateTextDescription(base64Data, mimeType, "Analyze the provided image and describe the prominent patterns, textures, and repeating visual elements in detail.");
                     setOutputText(description);
@@ -99,16 +132,32 @@ const App: React.FC = () => {
                     const graphicFormat = await generateTextDescription(base64Data, mimeType, graphicFormatPrompt);
                     setOutputText(graphicFormat);
                     break;
+                case TransformationType.CLARITY_BOOST:
+                    const clarityIntensity = getIntensityLabel(intensity);
+                    const clarityBoost = await generateImageTransformation(base64Data, mimeType, `Enhance the clarity and sharpness of this image. Apply ${clarityIntensity} enhancement. Reduce blur and bring out fine details. The output should be a clearer version of the original photo.`);
+                    setOutputImage(clarityBoost);
+                    break;
+                case TransformationType.PATTERNIZE:
+                    const patternIntensity = getIntensityLabel(intensity);
+                    const pattern = await generateImageTransformation(base64Data, mimeType, `Analyze the prominent patterns and textures in this image and generate a seamless, tileable pattern based on them. The pattern should capture the essence of the original image's design with ${patternIntensity} detail and complexity.`);
+                    setOutputImage(pattern);
+                    break;
+                case TransformationType.GEOMETRIZE:
+                    const geometrizationLevel = getAbstractionLevel(intensity);
+                    const geometrization = await generateImageTransformation(base64Data, mimeType, `Simplify this image into a composition of geometric shapes and solid colors. Represent the main subject and overall structure ${geometrizationLevel}.`);
+                    setOutputImage(geometrization);
+                    break;
                 default:
                     throw new Error("Invalid transformation type");
             }
         } catch (err) {
-            console.error(err);
             setError(err instanceof Error ? err.message : "An unknown error occurred.");
         } finally {
             setIsLoading(false);
         }
-    }, [originalImage, selectedTransformation, selectedModel]);
+    }, [originalImage, selectedTransformation, selectedModel, prompt, intensity]);
+
+    const isGenerateDisabled = isLoading || (selectedTransformation === TransformationType.TEXT_TO_IMAGE ? !prompt : !originalImage);
 
     return (
         <div className="min-h-screen bg-gray-900 text-gray-100 font-sans">
@@ -117,21 +166,39 @@ const App: React.FC = () => {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                     {/* Left Panel */}
                     <div className="flex flex-col gap-6 p-6 bg-gray-800 rounded-2xl shadow-lg border border-gray-700">
-                        <h2 className="text-2xl font-bold text-indigo-400">1. Upload Image</h2>
-                        <ImageUploader onImageUpload={handleImageUpload} imagePreview={originalImagePreview} />
+                        <h2 className="text-2xl font-bold text-indigo-400">1. Choose Transformation</h2>
+                         <ControlPanel
+                            selected={selectedTransformation}
+                            onSelect={(type) => {
+                                setSelectedTransformation(type);
+                                setIntensity(5); // Reset intensity on new selection
+                            }}
+                            selectedModel={selectedModel}
+                            onModelChange={setSelectedModel}
+                            onGenerate={handleGenerate}
+                            isDisabled={isGenerateDisabled}
+                            intensity={intensity}
+                            onIntensityChange={setIntensity}
+                        />
                         
-                        {originalImagePreview && (
-                            <>
-                                <h2 className="text-2xl font-bold text-indigo-400 mt-4">2. Choose Transformation</h2>
-                                <ControlPanel
-                                    selected={selectedTransformation}
-                                    onSelect={setSelectedTransformation}
-                                    selectedModel={selectedModel}
-                                    onModelChange={setSelectedModel}
-                                    onGenerate={handleGenerate}
-                                    isDisabled={isLoading}
+                        <h2 className="text-2xl font-bold text-indigo-400 mt-2">
+                            {selectedTransformation === TransformationType.TEXT_TO_IMAGE ? '2. Enter Prompt' : '2. Upload Image'}
+                        </h2>
+                        {selectedTransformation === TransformationType.TEXT_TO_IMAGE ? (
+                             <div className="w-full">
+                                <textarea
+                                    id="prompt-input"
+                                    rows={10}
+                                    className="w-full bg-gray-700/50 border border-gray-600 rounded-lg py-3 px-4 text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 resize-y leading-relaxed"
+                                    placeholder="e.g., A futuristic city at sunset, with flying cars..."
+                                    value={prompt}
+                                    onChange={(e) => setPrompt(e.target.value)}
+                                    disabled={isLoading}
+                                    aria-label="Image generation prompt"
                                 />
-                            </>
+                            </div>
+                        ) : (
+                            <ImageUploader onImageUpload={handleImageUpload} imagePreview={originalImagePreview} />
                         )}
                     </div>
 
@@ -143,7 +210,7 @@ const App: React.FC = () => {
                             outputText={outputText}
                             isLoading={isLoading}
                             error={error}
-                            hasOriginal={!!originalImage}
+                            hasOriginal={!!(originalImage || prompt)}
                         />
                     </div>
                 </div>
