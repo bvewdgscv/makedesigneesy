@@ -1,0 +1,5 @@
+{
+  "name": "AI Image Transformer",
+  "description": "An interactive web application to upload an image and apply various AI-powered transformations, including line art extraction, depth map generation, pattern description, and artistic variations using the Gemini API.",
+  "requestFramePermissions": []
+}
